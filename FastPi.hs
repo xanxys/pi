@@ -51,7 +51,8 @@ shell vm=do
                     case parseProcesses x of
                         Left errs -> mapM_ (\(PError n s)->printf "at line %d: %s\n" n s) errs >> shell vm
                         Right ps_delta -> do
-                            printf "inserting processes\n"
+                            printf "inserting process\n"
+                            putStr $ pprintProcess ps_delta
                             let VM ps cs=vm
                             shell $ VM (ps_delta:ps) cs
                 else do
@@ -80,13 +81,14 @@ data PError=PError Int String deriving(Show)
 parseProcesses :: String -> Either [PError] Process
 parseProcesses filecont
     |any isLeft lines_a = Left $ map fromLeft $ filter isLeft lines_a
-    |otherwise = Right $ constructM $ parseIndentTree cont
+    |otherwise = Right $ constructM $ parseIndentForest cont
     where
         construct (Node h@(HNew r) cs)=New r $ constructM cs
         construct (Node h@(HInput c as) cs)=Input c as $ constructM cs
         construct (Node h@(HInputR c as) cs)=InputR c as $ constructM cs
-        construct (Node h@(HOutput c as) [])=Output c as
-        construct (Node h@(HOutput _ _) _)=error "output cannot take continuation"
+        construct (Node h@(HOutput c as) cs)=case constructM cs of
+            Null -> Output c as
+            _ -> error "output cannot take continuation"
         
         constructM []=Null
         constructM [x]=construct x
@@ -120,10 +122,28 @@ parseProcesses filecont
             Left err -> Left $ show err
             Right ph -> Right (tabs,ph)
 
+pprintProcess :: Process -> String
+pprintProcess p=unlines $ map f $ flattenIndentForest $ toForest p
+    where
+        f (i,x)=replicate (i*4) ' '++show x
+        
+        toForest (Input c as x)=[Node (HInput c as) $ toForest x]
+        toForest (InputR c as x)=[Node (HInputR c as) $ toForest x]
+        toForest (Output c as)=[Node (HOutput c as) []]
+        toForest (New c x)=[Node (HNew c) $ toForest x]
+        toForest (Par ps)=concatMap toForest ps
+        
 
 
-parseIndentTree :: [(Int,a)] -> Forest a
-parseIndentTree=fst . aux 0
+flattenIndentForest ::  Forest a -> [(Int,a)]
+flattenIndentForest=aux 0
+    where
+        aux n ts=concatMap (aux1 n) ts
+        aux1 n (Node x cs)=(n,x):aux (n+1) cs
+
+
+parseIndentForest :: [(Int,a)] -> Forest a
+parseIndentForest=fst . aux 0
     where
         aux _ []=([],[])
         aux n rs0@((i,x):rs)
@@ -146,6 +166,7 @@ data PrHeader
     |HInputR BID [BID]
     |HOutput BID [BID]
     |HNew BID
+    deriving(Show)
 
 [peggy|
 

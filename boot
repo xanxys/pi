@@ -6,4 +6,3 @@ _stdio_getbyte<(cont)
         cont>()
             _stdio_getbyte<(cont)
 
-

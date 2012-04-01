@@ -1,0 +1,13 @@
+_stdio_putbyte<([72],cont)
+cont>() |
+    _stdio_putbyte<([101],cont)
+    cont>() |
+        _stdio_putbyte<([108],cont)
+        cont>() |
+            _stdio_putbyte<([108],cont)
+            cont>() |
+                _stdio_putbyte<([111],cont)
+                cont>() |
+                    _stdio_putbyte<([10],cont)
+                    cont>() null
+

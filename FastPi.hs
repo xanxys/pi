@@ -4,6 +4,7 @@ import Control.Monad.State
 import Control.Monad.Error
 import Control.Monad.STM
 import Control.Concurrent
+import Control.Concurrent.MVar
 import Control.Concurrent.STM.TChan
 import qualified Data.Map as M
 import qualified Data.Binary as Bin
@@ -20,8 +21,11 @@ import Data.IORef
 import Data.Word
 import System.Random
 import System.IO
+import System.IO.Unsafe
 import System.Directory
 import System.Environment
+import Graphics.Rendering.Cairo
+import Graphics.UI.Gtk hiding(get,Socket)
 import Text.Printf
 import Network.Socket hiding(send,sendTo,recv,recvFrom)
 import Network.Socket.ByteString
@@ -33,6 +37,52 @@ main=do
     tc<-parseArgs >>= createIncoming
     sk<-genSendSocket
     shell ShellState{sendSocket=sk,recvChannel=tc,neighbors=[],current=VM [] M.empty}
+
+
+drawChannel :: TChan ((Int,Int),(Double,Double,Double))
+drawChannel=unsafePerformIO $ do
+    tc<-newTChanIO
+    
+    forkIO $ do
+        initGUI
+        
+        window<-windowNew
+        area<- drawingAreaNew
+        set window [containerChild := area]
+        widgetShowAll window
+        dw<-widgetGetDrawWindow area
+        
+        img<-newMVar M.empty
+        
+        -- apply new value to img map
+        forkIO $ forever $ do
+            x<-tryReadTChan tc
+            case x of
+                Nothing -> threadDelay $ 10*100
+                Just (pos,col) -> void $ modifyMVar_ img $ return . M.insert pos col
+        
+        -- trigger redraw
+        forkIO $ forever $ do
+            drawWindowInvalidateRect dw (Rectangle 0 0 100 100) True
+            threadDelay $ 30*1000
+        
+        -- redraw handler
+        area `on` exposeEvent $ tryEvent $ liftIO $ do
+            (w,h) <-widgetGetSize area
+            mm<-readMVar img
+            print ("drawing",M.size mm)
+            renderWithDrawable dw $ mapM_ (\((px,py),(r,g,b))->
+                setSourceRGB r g b >>
+                rectangle (fromIntegral px) (fromIntegral py) 1 1 >>
+                fill) $ M.assocs mm
+
+        
+        mainGUI
+    
+    return tc
+
+        
+    
 
 -- | fetch port no. to receive processes
 parseArgs :: IO Int
@@ -48,7 +98,7 @@ genSendSocket=do
     from_addrs<-getAddrInfo (Just defaultHints{addrFlags=[AI_PASSIVE,AI_ADDRCONFIG],addrSocketType=Datagram}) (Just "::") Nothing
     let addr=head from_addrs
     socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
-    
+
 
 createIncoming :: Int -> IO (TChan Process)
 createIncoming port=do
@@ -74,8 +124,13 @@ createIncoming port=do
     return tc
 
 
--- | ip address & port (UDP)
-data OtherVM=OtherVM String Int deriving(Show)
+-- it's assumed that underlying link exposes underlying physical property as closely as possible.
+-- In other terms, it's optimized for latency.
+-- providing reliability / security etc. is up to application (and library)
+-- (communication as program)
+data OtherVM
+    =IPLink String Int -- ^ ip address & port (UDP)
+    deriving(Show)
 
 -- output
 diffuse :: Socket -> [OtherVM] -> [(BID,[BID])] -> IO [(BID,[BID])]
@@ -93,7 +148,7 @@ diffuse sk ns cs=do
         
 
 sendTo :: Socket -> OtherVM -> (BID,[BID]) -> IO ()
-sendTo sock (OtherVM n port) (c,as)=do
+sendTo sock (IPLink n port) (c,as)=do
     -- generate recipent addr
     to_addrs<-getAddrInfo (Just defaultHints{addrFlags=[AI_PASSIVE,AI_ADDRCONFIG],addrSocketType=Datagram}) (Just n) (Just $ show port)
     let addr=head to_addrs
@@ -160,7 +215,7 @@ shell st=do
         ('c':node) -> do
             let [h,p]=words node; port=read p
             printf "linking to %s : %d\n" h port
-            shell st{neighbors=OtherVM h port:neighbors st}
+            shell st{neighbors=IPLink h port:neighbors st}
         "d" -> do
             printf "severing all links\n"
             shell st{neighbors=[]}
@@ -323,19 +378,50 @@ stepPrim strm proc@(BID 0x9d3e378ac6d4b6a1 0x51380ad49adb6cf9,args)=
                 Just ch -> return [(k,[toU32 $ fromIntegral $ ord ch])]
         _ -> return []
 -- raster2
-{-
-stepPrim strm proc@(BID 0xb94e960c1b828a55 0xcb213d5747d37e98,args)=
-    return [proc]
 
-0x2f5323a5235e8b6b
-0xb97469b18623ad36
-0xb202935f7db468ef5
-0xcba228f67e38501ea
--}
+stepPrim strm proc@(BID 0xb94e960c1b828a55 0xcb213d5747d37e98,args)=
+    case args of
+        [k] -> print "here" >> return [(k,[packPos (0,0)])]
+        _ -> return []
+
+stepPrim strm proc@(BID 0x2f5323a5235e8b6b 0xb97469b18623ad36,args)=
+    case args of
+        [p,r,u,l,d] -> do
+            let Just (x,y)=unpackPos p
+            return
+                [(r, [packPos (x+1,y)])
+                ,(u, [packPos (x,y-1)])
+                ,(l, [packPos (x-1,y)])
+                ,(d, [packPos (x,y+1)])]
+        _ -> return []
+
+stepPrim strm proc@(BID 0xb202935f7db468ef 0xba228f67e38501ea,args)=
+    case args of
+        [pos,colR] -> do
+            let Just (x,y)=unpackPos pos; Just col=unpackCol colR
+            atomically $ writeTChan drawChannel ((x,y),col)
+            return []
+        _ -> return []
+
 -- others
 stepPrim _ p=return [p]
 
+-- VM dependent impl.
+packPos ::  (Int,Int) -> BID
+packPos (x,y)=toU32 $
+    fromIntegral (x+2^15) `shiftL` 16 .|. fromIntegral (y+2^15)
 
+unpackPos :: BID -> Maybe (Int,Int)
+unpackPos bid=do
+    w<-asU32 bid
+    return (fromIntegral (w `shiftR` 16)-2^15, fromIntegral (w .&. 0xffff)-2^15)
+
+unpackCol :: BID -> Maybe (Double,Double,Double)
+unpackCol bid=do
+    w<-asU32 bid
+    let f n=fromIntegral ((w `shiftR` n) .&. 0xff)/256
+    return (f 16,f 8,f 0)
+    
 
 tryReadTChan :: TChan a -> IO (Maybe a)
 tryReadTChan tc=atomically $

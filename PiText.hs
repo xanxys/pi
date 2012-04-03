@@ -166,6 +166,9 @@ hash "_mirror_encode"=bid "eec4b16005331d2fe9dc5aaf6f9f1eb6"
 hash "_mirror_decode"=bid "76c24ddb17c0fb6d66ae713d03ef7511"
 hash "_stdio_putbyte"=bid "6c1d0fba4c7e97a7b3252dfe1f23ab3a"
 hash "_stdio_getbyte"=bid "9d3e378ac6d4b6a151380ad49adb6cf9"
+hash "_raster2_here"=bid "b94e960c1b828a55cb213d5747d37e98"
+hash "_raster2_expand"=bid "2f5323a5235e8b6bb97469b18623ad36"
+hash "_raster2_set"=bid "b202935f7db468efba228f67e38501ea"
 hash str=BID (packBytes x) (packBytes y)
     where
         packBytes=foldl1' (\s v->(s `shiftL` 8) .|. v)

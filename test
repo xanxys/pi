@@ -1,0 +1,11 @@
+
+!contR>(pos)
+    _raster2_expand<(pos,contD,kill,kill,kill)
+    _raster2_set<(pos,[10000])
+
+!contD>(pos)
+    _raster2_expand<(pos,kill,kill,kill,contR)
+
+_raster2_here<(contR)
+
+

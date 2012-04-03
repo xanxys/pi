@@ -457,7 +457,7 @@ stepPrim _ (BID 0x12a7dd977d635c3c 0x1c36cdbe40b7d99b,args)=return $
 stepPrim _ (BID 0xeec4b16005331d2f 0xe9dc5aaf6f9f1eb6,args)=return $
     case args of
         [a,b,c,d,k] -> case liftM4 compose (asU32 a) (asU32 b) (asU32 c) (asU32 d) of
-            Just v -> [(c,[v])]
+            Just v -> [(k,[v])]
             Nothing -> []
         _ -> []
     where
